@@ -30,7 +30,6 @@ jobs:
       - name: Apply icache patch to local JDK clone
         run: |
           chmod +x patch_icache.sh
-          # Ersetze den festen Pfad im Skript dynamisch durch das echte Repository-Verzeichnis
           sed -i '' "s|/tmp/openjdk-25-ios|$GITHUB_WORKSPACE/openjdk-25-clone|g" patch_icache.sh
           ./patch_icache.sh
 
@@ -48,6 +47,7 @@ jobs:
           chmod +x *.sh
           ./getlibs.sh
           ./buildlibs.sh
+          ./clonejdk.sh
           ./buildjdk.sh
           ./removejdkdebuginfo.sh
           ./tarjdk.sh
