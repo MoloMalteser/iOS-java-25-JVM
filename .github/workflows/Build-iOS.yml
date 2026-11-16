@@ -1,19 +1,83 @@
-name: Build OpenJDK 25 for iOS (BaconMania)
+name: Build OpenJDK 17, 21, 25 for Android and iOS
 
 on:
   push:
-    branches: [ main, master ]
   pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
+  schedule:
+    - cron: "0 1 1 */2 *"
 
 jobs:
-  build-ios:
-    name: Build iOS OpenJDK 25
-    runs-on: macos-14
+  build_android:
+    strategy:
+      matrix:
+        arch: ["aarch32", "aarch64", "x86", "x86_64"]
+        version: [17, 21, 25]
+        exclude:
+          - arch: aarch32
+            version: 25
+          - arch: x86
+            version: 25
+      fail-fast: false
 
+    name: "Build Java ${{ matrix.version }} for Android ${{matrix.arch}}"
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: set up JDK ${{ matrix.version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.version }}
+          distribution: temurin
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt -y install autoconf python3 python-is-python3 unzip zip systemtap-sdt-dev libxtst-dev libasound2-dev libelf-dev libfontconfig1-dev libx11-dev libxext-dev libxrandr-dev libxrender-dev libxtst-dev libxt-dev
+
+      - name: Apply icache patch (if script exists)
+        run: |
+          if [ -f "patch_icache.sh" ]; then
+            chmod +x patch_icache.sh
+            ./patch_icache.sh
+          fi
+
+      - name: Build with CI build script
+        run: export TARGET_VERSION=${{ matrix.version }} && bash "1_ci_build_arch_${{matrix.arch}}.sh"
+
+      - name: Upload JDK build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: "jdk${{ matrix.version }}-${{matrix.arch}}"
+          path: jdk${{ matrix.version }}-android*.tar.xz
+
+      - name: Upload JRE build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: "jre${{ matrix.version }}-${{matrix.arch}}"
+          path: jre${{ matrix.version }}-android*.tar.xz
+
+      - name: Upload JRE debuginfo build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: "jre${{ matrix.version }}-debuginfo-${{matrix.arch}}"
+          path: dizout
+
+  build_iosport:
+    strategy:
+      matrix:
+        version: [17, 21, 25]
+      fail-fast: false
+
+    name: "Build Java ${{ matrix.version }} for iOS aarch64"
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: true
@@ -22,20 +86,20 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: '21'
-          distribution: 'temurin'
+          distribution: temurin
 
-      - name: Install Build Tools
+      - name: Install build dependencies
         run: |
           brew install autoconf freetype
 
-      # patch_icache.sh liegt direkt im Root-Ordner
-      - name: Apply iOS Patches
+      - name: Apply icache patch
         run: |
-          chmod +x patch_icache.sh
-          ./patch_icache.sh
+          if [ -f "patch_icache.sh" ]; then
+            chmod +x patch_icache.sh
+            ./patch_icache.sh
+          fi
 
-      # Alle weiteren Skripte werden im Unterordner angelauramc-openjdk-build ausgeführt
-      - name: Build OpenJDK 25
+      - name: Build OpenJDK for iOS
         working-directory: ./angelauramc-openjdk-build
         env:
           TARGET: aarch64-macos-ios
@@ -44,16 +108,74 @@ jobs:
           BUILD_FREETYPE_VERSION: "2.10.4"
           JDK_DEBUG_LEVEL: "release"
           JVM_VARIANTS: "server"
+          TARGET_VERSION: ${{ matrix.version }}
         run: |
           chmod +x *.sh
-          ./getlibs.sh
-          ./buildlibs.sh
-          ./buildjdk.sh
-          ./removejdkdebuginfo.sh
-          ./tarjdk.sh
+          if [ -f "../1_ci_build_arch_aarch64.sh" ]; then
+            cd ..
+            bash "1_ci_build_arch_aarch64.sh"
+          else
+            ./getlibs.sh
+            ./buildlibs.sh
+            ./buildjdk.sh
+            ./removejdkdebuginfo.sh
+            ./tarjdk.sh
+          fi
 
-      - name: Upload JDK Build Artifact
+      - name: Upload JRE build output
         uses: actions/upload-artifact@v4
         with:
-          name: openjdk-25-ios-aarch64
-          path: angelauramc-openjdk-build/*.tar.xz
+          name: "jre${{ matrix.version }}-ios-aarch64"
+          path: |
+            jre${{ matrix.version }}-ios*.tar.xz
+            angelauramc-openjdk-build/*.tar.xz
+
+      - name: Upload JRE debuginfo build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: "jre${{ matrix.version }}-ios-debuginfo-aarch64"
+          path: dizout
+
+  pojav:
+    needs: build_android
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        version: [17, 21]
+      fail-fast: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get jre${{ matrix.version }}-aarch32
+        uses: actions/download-artifact@v4
+        with:
+          name: jre${{ matrix.version }}-aarch32
+          path: pojav
+
+      - name: Get jre${{ matrix.version }}-aarch64
+        uses: actions/download-artifact@v4
+        with:
+          name: jre${{ matrix.version }}-aarch64
+          path: pojav
+
+      - name: Get jre${{ matrix.version }}-x86
+        uses: actions/download-artifact@v4
+        with:
+          name: jre${{ matrix.version }}-x86
+          path: pojav
+
+      - name: Get jre${{ matrix.version }}-x86_64
+        uses: actions/download-artifact@v4
+        with:
+          name: jre${{ matrix.version }}-x86_64
+          path: pojav
+
+      - name: Repack JRE
+        run: export TARGET_VERSION=${{ matrix.version }} && bash "9_repackjre.sh" $GITHUB_WORKSPACE/pojav $GITHUB_WORKSPACE/pojav/jre${{ matrix.version }}-pojav
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jre${{ matrix.version }}-pojav
+          path: pojav/jre${{ matrix.version }}-pojav/*
