@@ -1,0 +1,59 @@
+name: Build OpenJDK 25 for iOS (BaconMania)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    name: Build iOS OpenJDK 25
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Bootstrap JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install Build Tools
+        run: |
+          brew install autoconf freetype
+
+      - name: Apply iOS Patches
+        run: |
+          chmod +x patch_icache.sh
+          ./patch_icache.sh
+
+      - name: Build OpenJDK 25
+        working-directory: ./angelauramc-openjdk-build
+        env:
+          TARGET: aarch64-macos-ios
+          TARGET_JDK: aarch64
+          BUILD_IOS: 1
+          BUILD_FREETYPE_VERSION: "2.10.4"
+          JDK_DEBUG_LEVEL: "release"
+          JVM_VARIANTS: "server"
+        run: |
+          chmod +x *.sh
+          ./getlibs.sh
+          ./buildlibs.sh
+          ./buildjdk.sh
+          ./removejdkdebuginfo.sh
+          ./tarjdk.sh
+
+      - name: Upload JDK Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openjdk-25-ios-aarch64
+          path: |
+            angelauramc-openjdk-build/*.tar.xz
+            angelauramc-openjdk-build/*.tar.gz
